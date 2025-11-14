@@ -1,0 +1,131 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+
+# ---------------------------------------------------------
+# 1. Generate 2D Gaussian Mixture Data
+# ---------------------------------------------------------
+def generate_gmm(n=1000, sigma=0.5, seed=2):
+    torch.manual_seed(seed)
+
+    d = 2
+    X_pos = torch.randn(n//2, d) * sigma + torch.tensor([2.0, 2.0])
+    X_neg = torch.randn(n//2, d) * sigma + torch.tensor([-2.0, -2.0])
+    
+    X = torch.cat([X_pos, X_neg], dim=0)
+    y = torch.cat([torch.ones(n//2), -torch.ones(n//2)])
+
+    return X, y
+
+
+# ---------------------------------------------------------
+# 2. Small Neural Network Classifier
+# ---------------------------------------------------------
+class Net(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(2, 8),
+            nn.ReLU(),
+            nn.Linear(8, 1)
+        )
+
+    def forward(self, x):
+        return self.layers(x)
+
+
+# ---------------------------------------------------------
+# 3. Train the model and record losses
+# ---------------------------------------------------------
+def train_model(X_train, y_train, X_test, y_test, epochs, lr=1e-2):
+    model = Net()
+    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+    loss_fn = nn.MSELoss()
+
+    X_train = X_train.float()
+    y_train = y_train.float().unsqueeze(1)
+    X_test = X_test.float()
+    y_test = y_test.float().unsqueeze(1)
+
+    train_losses = []
+    test_losses = []
+
+    for t in range(epochs):
+        # forward
+        pred = model(X_train)
+        loss = loss_fn(pred, y_train)
+
+        # backward
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # track losses
+        with torch.no_grad():
+            test_pred = model(X_test)
+            test_loss = loss_fn(test_pred, y_test)
+
+        train_losses.append(loss.item())
+        test_losses.append(test_loss.item())
+
+    return model, train_losses, test_losses
+
+
+# ---------------------------------------------------------
+# 4. Plot decision boundary
+# ---------------------------------------------------------
+def plot_decision_boundary(model, X, y, grid_res=200):
+    x_min, x_max = X[:, 0].min() - 1, X[:, 0].max() + 1
+    y_min, y_max = X[:, 1].min() - 1, X[:, 1].max() + 1
+
+    xx, yy = np.meshgrid(
+        np.linspace(x_min, x_max, grid_res),
+        np.linspace(y_min, y_max, grid_res)
+    )
+    grid = torch.tensor(np.c_[xx.ravel(), yy.ravel()]).float()
+
+    with torch.no_grad():
+        zz = model(grid).reshape(xx.shape)
+
+    plt.figure(figsize=(7, 6))
+    plt.contourf(xx, yy, zz, levels=50, alpha=0.6, cmap="coolwarm")
+    plt.scatter(X[:, 0], X[:, 1], c=y, cmap="bwr", edgecolor="k")
+    plt.title("Neural Network Decision Boundary on 2D GMM")
+    plt.show()
+
+
+# ---------------------------------------------------------
+# 5. Plot training & test loss curves
+# ---------------------------------------------------------
+def plot_losses(train_losses, test_losses):
+    plt.figure(figsize=(7, 5))
+    plt.plot(train_losses, label="Train Loss")
+    plt.plot(test_losses, label="Test Loss")
+    plt.xlabel("Iteration")
+    plt.ylabel("MSE Loss")
+    plt.title("Training and Test Loss Curves")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+
+# ---------------------------------------------------------
+# 6. Run the full experiment
+# ---------------------------------------------------------
+if __name__ == "__main__":
+    X, y = generate_gmm(n=1000, sigma=0.4)
+
+    # train/test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=0
+    )
+
+    model, train_losses, test_losses = train_model(
+        X_train, y_train, X_test, y_test, epochs=6
+    )
+
+    plot_losses(train_losses, test_losses)
+    plot_decision_boundary(model, X, y)
