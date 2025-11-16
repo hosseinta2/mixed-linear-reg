@@ -1,0 +1,155 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+
+
+# ---------------------------------------------------------
+# 1. Generate Ring vs Blob Data
+# ---------------------------------------------------------
+def generate_ring_blob(n=400, seed=2, inner_sigma=0.5, outer_sigma=0.3):
+    torch.manual_seed(seed)
+
+    n_half = n // 2
+
+    # Negative class: inner Gaussian blob
+    X_neg = torch.randn(n_half, 2) * inner_sigma
+
+    # Positive class: ring
+    angles = 2 * torch.pi * torch.rand(n_half)
+    radius = 2.0 + torch.randn(n_half) * outer_sigma
+    X_pos = torch.stack([radius * torch.cos(angles),
+                         radius * torch.sin(angles)], dim=1)
+
+    X = torch.cat([X_pos, X_neg], dim=0)
+    y = torch.cat([torch.ones(n_half), -torch.ones(n_half)])
+
+    return X, y
+
+
+# ---------------------------------------------------------
+# 2. Two-Layer ReLU Network
+# ---------------------------------------------------------
+class Net(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(2, 100),
+            nn.ReLU(),
+            nn.Linear(100, 1)
+        )
+
+    def forward(self, x):
+        return self.layers(x)
+
+
+# Logistic loss for labels y ∈ {+1, -1}
+def logistic_loss(logits, labels):
+    return torch.log1p(torch.exp(-labels * logits)).mean()
+
+
+# ---------------------------------------------------------
+# 3. Training
+# ---------------------------------------------------------
+def train_model(X_train, y_train, X_test, y_test, epochs=10000, lr=2):
+    model = Net()
+    optimizer = optim.SGD(model.parameters(), lr=lr)
+
+    X_train = X_train.float()
+    y_train = y_train.float().unsqueeze(1)
+    X_test = X_test.float()
+    y_test = y_test.float().unsqueeze(1)
+
+    train_losses = []
+    test_losses = []
+
+    for t in range(epochs):
+        # Forward
+        logits = model(X_train)
+        loss = logistic_loss(logits, y_train)
+
+        # Backward
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # Track losses
+        with torch.no_grad():
+            test_logits = model(X_test)
+            test_loss = logistic_loss(test_logits, y_test)
+
+        train_losses.append(loss.item())
+        test_losses.append(test_loss.item())
+
+    return model, train_losses, test_losses
+
+
+# ---------------------------------------------------------
+# 4. Proper Decision Boundary Plot
+# ---------------------------------------------------------
+def plot_decision_boundary(model, X, y, grid_res=300):
+    x_min, x_max = X[:, 0].min() - 1, X[:, 0].max() + 1
+    y_min, y_max = X[:, 1].min() - 1, X[:, 1].max() + 1
+
+    xx, yy = np.meshgrid(
+        np.linspace(x_min, x_max, grid_res),
+        np.linspace(y_min, y_max, grid_res)
+    )
+    grid = torch.tensor(np.c_[xx.ravel(), yy.ravel()]).float()
+
+    with torch.no_grad():
+        logits = model(grid).reshape(xx.shape)
+        preds = (logits > 0).float()  # classification regions
+
+    plt.figure(figsize=(7, 6))
+
+    # classification regions: red = +1, blue = -1
+    plt.contourf(xx, yy, preds, levels=[-1, 0, 1], alpha=0.4, cmap="coolwarm")
+
+    # true decision boundary (logit = 0)
+    plt.contour(xx, yy, logits, levels=[0], colors='k', linewidths=2)
+
+    # data points
+    plt.scatter(X[:, 0], X[:, 1], c=y, cmap="bwr", edgecolor='k')
+
+    plt.title("Neural Network Decision Boundary")
+    plt.show()
+
+
+# ---------------------------------------------------------
+# 5. Loss Curves
+# ---------------------------------------------------------
+def plot_losses(train_losses, test_losses):
+    plt.figure(figsize=(7, 5))
+    plt.plot(train_losses, label="Train Loss")
+    plt.plot(test_losses, label="Test Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training and Test Loss")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+
+# ---------------------------------------------------------
+# 6. Full Experiment
+# ---------------------------------------------------------
+if __name__ == "__main__":
+    # generate data
+    X, y = generate_ring_blob(n=400)
+
+    # train/test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=0
+    )
+
+    # train
+    model, train_losses, test_losses = train_model(
+        X_train, y_train, X_test, y_test, epochs=10000
+    )
+
+    # plots
+    plot_losses(train_losses, test_losses)
+    plot_decision_boundary(model, X, y)
